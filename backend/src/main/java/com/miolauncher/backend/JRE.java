@@ -369,7 +369,12 @@ public final class JRE {
         for (String lib : coreLibs) {
             preload(libRoot + "/" + lib);
         }
-        // 预加载其余所有共享库（失败的如 AWT 类可忽略）
+        // AWT/字体库链：libfontmanager.so 引用 libawt.so 导出的 AWTFreeChar 等符号，
+        // 必须先让 libawt.so 以 RTLD_GLOBAL 进入全局命名空间，libfontmanager.so 才能 dlopen。
+        // listFiles 遍历顺序不保证（inode 序），漏了显式链会导致 Java 8 + cacio 启动时
+        // UnsatisfiedLinkError: cannot locate symbol "AWTFreeChar"。
+        preloadAwtChain(libRoot);
+        // 预加载其余所有共享库（AWT 链已单独处理，其余失败可忽略）
         File libDir = new File(libRoot);
         File[] libs = libDir.listFiles((dir, name) -> name.endsWith(".so"));
         if (libs != null) {
@@ -532,6 +537,9 @@ public final class JRE {
         for (String lib : coreLibs) {
             preload(libRoot + "/" + lib);
         }
+        // AWT/字体库链：libfontmanager.so 引用 libawt.so 的 AWTFreeChar 等符号，
+        // 必须先以 RTLD_GLOBAL 加载 libawt.so，否则 dlopen 报 cannot locate symbol。
+        preloadAwtChain(libRoot);
         File libDirFile = new File(jreHome, "lib");
         File[] libs = libDirFile.listFiles((dir, name) -> name.endsWith(".so"));
         if (libs != null) {

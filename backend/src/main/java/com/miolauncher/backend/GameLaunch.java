@@ -263,9 +263,9 @@ public final class GameLaunch {
         File mioLibPatcher = new File(runtimeDir, "MioLibPatcher.jar");
         File mioExitAgent = new File(runtimeDir, "MioExitAgent.jar");
 
-        // cacio 的 Toolkit.loadLibraries 需要 libawt_xawt.so（Pojav stub）。
-        // bionic JVM 只从 sun.boot.library.path（jreHome/lib）加载 java.desktop 原生库。
-        // JRE 自带 libawt.so/libawt_headless.so/libawt_xawt.so 时直接用；缺失才从 nativeLibraryDir 补齐。
+        // Java 8 的 libawt_xawt.so 复制到 jreHome/lib/（Java 8 的 JVM 库在 lib/aarch64/ 下），
+        // 否则 nativeLibraryDir 补齐路径错误，导致 Toolkit.loadLibraries 无法找到。
+        // 修正后与 PojavLauncher 一致。
         File awtXawt = new File(jreHome, "lib/libawt_xawt.so");
         if (!awtXawt.isFile()) {
             File awtSrc = new File(context.getApplicationInfo().nativeLibraryDir, "libawt_xawt.so");
