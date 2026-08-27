@@ -580,6 +580,28 @@ public final class JRE {
         }
     }
 
+    /**
+     * 预加载 AWT/字体库链（libfontmanager.so 依赖 libawt.so 导出的 AWTFreeChar 等符号）。
+     * bionic 的 dlopen 要求被引用符号已存在于全局命名空间（RTLD_GLOBAL），
+     * 因此必须先加载 libawt.so 再加载 libfontmanager.so，顺序不能由 listFiles 决定。
+     * 缺失顺序会在 Java 8 + cacio 启动时抛
+     * UnsatisfiedLinkError: cannot locate symbol "AWTFreeChar"。
+     */
+    private static void preloadAwtChain(String libRoot) {
+        // PojavLauncher 参考实现（JREUtils.initJavaRuntime）的加载顺序：
+        // libawt.so → libawt_headless.so → libfreetype.so → libfontmanager.so
+        String[] awtLibs = {
+            "libawt.so", "libawt_headless.so", "libfreetype.so", "libfontmanager.so",
+        };
+        for (String lib : awtLibs) {
+            preload(libRoot + "/" + lib);
+        }
+        // 依赖可能因顺序未齐而失败，重试一次（与 coreLibs 相同策略）
+        for (String lib : awtLibs) {
+            preload(libRoot + "/" + lib);
+        }
+    }
+
     private static String ldLibraryPath(File jreHome, int javaMajor) {
         String jre = jreHome.getAbsolutePath();
         boolean java8 = javaMajor < 9;
