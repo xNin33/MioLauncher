@@ -1,70 +1,51 @@
-name: Build Signed Release APK
-
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-  workflow_dispatch:
-
-jobs:
-  build:
-    name: Build signed app-release.apk
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages and accept licenses
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-
-      - name: Decode keystore and write key.properties
+      - name: Decode keystore and write key.properties (最终调试版)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
-          {
-            echo -n "storeFile=keystore.jks" > key.properties
-            echo "" >> key.properties
-            echo -n "storePassword=$KEYSTORE_PASSWORD" >> key.properties
-            echo "" >> key.properties
-            echo -n "keyAlias=$KEY_ALIAS" >> key.properties
-            echo "" >> key.properties
-            echo -n "keyPassword=$KEY_PASSWORD" >> key.properties
-          }
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          
+          python3 << 'EOF'
+          import os
+          import subprocess
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+          password = os.environ.get("KEYSTORE_PASSWORD", "")
+          alias = os.environ.get("KEY_ALIAS", "")
+          keypass = os.environ.get("KEY_PASSWORD", "")
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+          # 检查文件头
+          with open("keystore.jks", "rb") as f:
+              header = f.read(4)
+          print(f"✅ JKS 文件头: {header.hex()} (正常应为 feedfeed)")
+          
+          # 打印别名和密码长度（不打印完整密码）
+          print(f"✅ 当前传入的别名: '{alias}'")
+          print(f"✅ storePassword 长度: {len(password)}, keyPassword 长度: {len(keypass)}")
+          
+          # 尝试 keytool 验证
+          print("正在用 keytool 验证...")
+          result = subprocess.run(
+              ["keytool", "-list", "-v", "-keystore", "keystore.jks", "-storepass", password, "-alias", alias, "-keypass", keypass],
+              capture_output=True, text=True
+          )
+          
+          if result.returncode == 0:
+              print("✅✅✅ 验证完美通过！密码和别名完全正确！接下来去打包吧！")
+          else:
+              print("❌ 验证失败！错误信息如下：")
+              print(result.stderr)
+              exit(1)
+          EOF
 
-      - name: Use Maven AAPT2 on x86_64 runner
-        run: |
-          if [ -f gradle.properties ]; then
-            sed -i 's/^android\.aapt2FromMavenOverride=.*/# & (disabled in CI: x86_64 runner uses Maven AAPT2)/' gradle.properties
-          fi
-
-      - name: Build signed release APK
-        run: ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+          # 使用 Python 写入 key.properties，绝对不破坏特殊字符
+          python3 << 'EOF'
+          import os
+          with open("key.properties", "w") as f:
+              f.write(f"storeFile=keystore.jks\n")
+              f.write(f"storePassword={os.environ.get('KEYSTORE_PASSWORD', '')}\n")
+              f.write(f"keyAlias={os.environ.get('KEY_ALIAS', '')}\n")
+              f.write(f"keyPassword={os.environ.get('KEY_PASSWORD', '')}\n")
+          print("✅ key.properties 已安全生成")
+          EOF
