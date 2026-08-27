@@ -50,6 +50,14 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Use Maven AAPT2 on x86_64 runner
+        # 本地 arm64 机器用 qemu 包装 aapt2（android.aapt2FromMavenOverride=/usr/local/bin/aapt2），
+        # 但 GitHub 托管的 x86_64 runner 没有该文件，需注释掉让 AGP 从 Maven 下载 aapt2。
+        run: |
+          if [ -f gradle.properties ]; then
+            sed -i 's/^android\.aapt2FromMavenOverride=.*/# & (disabled in CI: x86_64 runner uses Maven AAPT2)/' gradle.properties
+          fi
+
       - name: Build signed release APK
         run: ./gradlew :app:assembleRelease --no-daemon
 
