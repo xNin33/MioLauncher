@@ -38,11 +38,14 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
           {
-            echo "storeFile=keystore.jks"
-            echo "storePassword=$KEYSTORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > key.properties
+            echo -n "storeFile=keystore.jks" > key.properties
+            echo "" >> key.properties
+            echo -n "storePassword=$KEYSTORE_PASSWORD" >> key.properties
+            echo "" >> key.properties
+            echo -n "keyAlias=$KEY_ALIAS" >> key.properties
+            echo "" >> key.properties
+            echo -n "keyPassword=$KEY_PASSWORD" >> key.properties
+          }
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
