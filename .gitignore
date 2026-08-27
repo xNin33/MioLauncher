@@ -19,6 +19,7 @@ build/
 local.properties
 *.keystore
 *.jks
+.agents
 *.jks.enc
 *.jks.bak
 .env
