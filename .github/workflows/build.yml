@@ -29,23 +29,46 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Decode keystore and write key.properties
+      # 🔥 核心步骤：生成 keystore 和 key.properties，并在 CI 上验证
+      - name: Generate Keystore and Validate Credentials
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > app/keystore.jks
+          # 1. 将 Base64 解码为 jks 文件（放在根目录）
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          
+          # 2. 检查解码后的文件是否有效
+          if [ ! -s keystore.jks ]; then
+            echo "❌ 错误：keystore.jks 文件为空！请检查 KEYSTORE_BASE64 是否正确。"
+            exit 1
+          fi
+          
+          # 3. 生成 key.properties
           {
-            echo -n "storeFile=keystore.jks" > key.properties
-            echo "" >> key.properties
-            echo -n "storePassword=$KEYSTORE_PASSWORD" >> key.properties
-            echo "" >> key.properties
-            echo -n "keyAlias=$KEY_ALIAS" >> key.properties
-            echo "" >> key.properties
-            echo -n "keyPassword=$KEY_PASSWORD" >> key.properties
-          }
+            echo "storeFile=keystore.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > key.properties
+          
+          # 4. 🔍 打印 Debug 信息（用于排查）
+          echo "---- DEBUG START ----"
+          echo "Keystore 文件大小: $(stat -c%s keystore.jks) bytes"
+          echo "Key Alias: $KEY_ALIAS"
+          echo "Store Password 长度: ${#KEYSTORE_PASSWORD}"
+          echo "Key Password 长度: ${#KEY_PASSWORD}"
+          
+          # 5. 使用 keytool 验证密码是否正确
+          if keytool -list -v -keystore keystore.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keypass "$KEY_PASSWORD" > /dev/null 2>&1; then
+            echo "✅ Keystore 验证成功！密码和别名完全匹配。"
+          else
+            echo "❌ 错误：Keystore 验证失败！请检查 KEYSTORE_PASSWORD 和 KEY_PASSWORD 是否正确，或者 KEY_ALIAS 是否匹配。"
+            exit 1
+          fi
+          echo "---- DEBUG END ----"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -54,8 +77,6 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Use Maven AAPT2 on x86_64 runner
-        # 本地 arm64 机器用 qemu 包装 aapt2（android.aapt2FromMavenOverride=/usr/local/bin/aapt2），
-        # 但 GitHub 托管的 x86_64 runner 没有该文件，需注释掉让 AGP 从 Maven 下载 aapt2。
         run: |
           if [ -f gradle.properties ]; then
             sed -i 's/^android\.aapt2FromMavenOverride=.*/# & (disabled in CI: x86_64 runner uses Maven AAPT2)/' gradle.properties
