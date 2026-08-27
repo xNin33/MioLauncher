@@ -29,6 +29,118 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
+      # JRE archives are intentionally not checked into git (and *.tar.xz is
+      # ignored), so fetch the runtimes before Gradle packages the library
+      # assets.  Keep the downloads outside the source tree until they are
+      # normalized below; action-download-artifact preserves the producer's
+      # directory layout, which may include an extra jreXX/ directory.
+      - name: Download JRE 8 artifact
+        uses: dawidd6/action-download-artifact@v9
+        with:
+          workflow: build.yml
+          workflow_conclusion: success
+          repo: AngelAuraMC/angelauramc-openjdk-build
+          branch: buildjre8
+          name: jre8-pojav
+          path: .ci/jre/8
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download JRE 21 artifact
+        uses: dawidd6/action-download-artifact@v9
+        with:
+          workflow: build.yml
+          workflow_conclusion: success
+          repo: AngelAuraMC/angelauramc-openjdk-build
+          branch: buildjre17-21
+          name: jre21-pojav
+          path: .ci/jre/21
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download JRE 25 artifact
+        uses: dawidd6/action-download-artifact@v9
+        with:
+          workflow: build.yml
+          workflow_conclusion: success
+          repo: FCL-Team/Android-OpenJDK-Build
+          branch: Build_JRE_25
+          name: jre25-multiarch
+          path: .ci/jre/25
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage and verify bundled JRE assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          stage_jre() {
+            local version="$1"
+            local source="$2"
+            local target="backend/src/main/assets/components/jre-${version}"
+            local archive staged listing top_levels top_count prefix tmp jvm_pattern
+
+            # The upstream artifacts have used both jreX-arm64-v8a.tar.xz and
+            # jreX-android-arm64-v8a.tar.xz names.  Match either form while
+            # selecting only the arm64 payload used by app's abiFilters.
+            archive="$(find "$source" -type f \( \
+              -iname "jre${version}-*arm64-v8a.tar.xz" -o \
+              -iname "jre${version}-*aarch64*.tar.xz" -o \
+              -iname "*jre${version}*arm64*.tar.xz" \
+            \) -print -quit)"
+            if [[ -z "$archive" ]]; then
+              echo "No arm64 JRE ${version} archive found in ${source}" >&2
+              find "$source" -type f -print >&2 || true
+              exit 1
+            fi
+
+            mkdir -p "$target"
+            staged="$target/jre${version}-arm64-v8a.tar.xz"
+            cp "$archive" "$staged"
+
+            # Verify the compressed tar before it gets embedded in the APK.
+            tar -tJf "$staged" >/dev/null
+
+            # Some artifact producers wrap the JRE in one top-level directory
+            # (for example jre21/jre21-arm64-v8a.tar.xz).  JRE.install extracts
+            # entries verbatim, so strip that wrapper and rebuild the archive
+            # with lib/ and bin/ at its root when necessary.
+            if [[ "$version" == "8" ]]; then
+              jvm_pattern='^(\./)?lib/((aarch64|arm|amd64|i386)/)?server/libjvm\.so$'
+            else
+              jvm_pattern='^(\./)?lib/server/libjvm\.so$'
+            fi
+            listing="$(tar -tJf "$staged")"
+            if ! grep -Eq "$jvm_pattern" <<<"$listing"; then
+              top_levels="$(sed 's#^\./##; s#/.*$##' <<<"$listing" | sed '/^$/d' | sort -u)"
+              top_count="$(wc -l <<<"$top_levels" | tr -d ' ')"
+              if [[ "$top_count" == "1" ]]; then
+                prefix="$top_levels"
+                tmp="${RUNNER_TEMP}/mio-jre-${version}"
+                rm -rf "$tmp"
+                mkdir -p "$tmp"
+                tar -xJf "$staged" -C "$tmp" --strip-components=1
+                rm -f "$staged"
+                tar -cJf "$staged" -C "$tmp" .
+                rm -rf "$tmp"
+              fi
+            fi
+
+            listing="$(tar -tJf "$staged")"
+            if ! grep -Eq "$jvm_pattern" <<<"$listing"; then
+              echo "JRE ${version} archive has no expected lib/server/libjvm.so: ${staged}" >&2
+              echo "$listing" | head -40 >&2
+              exit 1
+            fi
+            [[ -s "$staged" ]]
+            echo "Staged JRE ${version}: ${staged} ($(du -h "$staged" | cut -f1))"
+          }
+
+          stage_jre 8 .ci/jre/8
+          stage_jre 21 .ci/jre/21
+          stage_jre 25 .ci/jre/25
+
+          echo "Bundled JRE assets:"
+          find backend/src/main/assets/components -maxdepth 2 -type f -name 'jre*-arm64-v8a.tar.xz' -print | sort
+
       - name: Decode keystore and write key.properties
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
